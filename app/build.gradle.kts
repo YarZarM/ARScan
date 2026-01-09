@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -35,8 +37,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
+    kotlin{
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_11)
+        }
     }
     buildFeatures {
         compose = true
@@ -62,6 +66,7 @@ dependencies {
 
     //Hilt
     implementation("com.google.dagger:hilt-android:2.57.1")
+    implementation("androidx.hilt:hilt-navigation-compose:1.3.0")
     ksp("com.google.dagger:hilt-android-compiler:2.57.1")
 
     //Room
@@ -84,7 +89,8 @@ dependencies {
     //ARCore + SceneView
     implementation("androidx.xr.arcore:arcore-play-services:1.0.0-alpha09")
     implementation("com.google.ar:core:1.52.0")
-    implementation("io.github.sceneview:sceneview:2.3.1")
+//    implementation("io.github.sceneview:sceneview:2.3.1")
+    implementation("io.github.sceneview:arsceneview:2.3.1")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
