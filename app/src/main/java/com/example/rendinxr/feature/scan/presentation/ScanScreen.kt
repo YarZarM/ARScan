@@ -160,8 +160,6 @@ fun ScanScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // IMPORTANT: Keep ARScene always in composition to avoid Filament material crashes
-        // Just disable interactions via isActive flag
         ARSceneContent(
             state = state,
             onEvent = viewModel::onEvent,
@@ -257,7 +255,7 @@ private fun ARSceneContent(
         engine = engine,
         modelLoader = modelLoader,
         view = view,
-        planeRenderer = isActive, // Disable plane renderer when not active
+        planeRenderer = isActive,
         sessionConfiguration = { session, config ->
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
@@ -710,7 +708,7 @@ private fun DefectDescriptionDialog(
         text = {
             Column {
                 Text(
-                    "Add a short description of this defect for the contractor.",
+                    "Add a short description of this defect",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))
