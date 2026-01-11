@@ -1,4 +1,4 @@
-# RendinXR - AR Defect Marker Application
+# AR Defect Marker Application
 
 An Android POC application for marking and tracking defects in physical spaces using Augmented Reality.
 
@@ -242,6 +242,7 @@ On first launch:
 | Feature | Status | Notes |
 |---------|--------|-------|
 | **Room Capture / 3D Mesh** | Platform limitation | Android lacks iOS RoomPlan equivalent; ARCore only provides plane detection |
+| **Wall Plane Visualization** | Library limitation | SceneView PlaneRenderer only shows horizontal planes; walls detected but not visualized |
 | **Cloud Sync** | Not implemented | Data is device-local only |
 | **Multi-user** | Not implemented | Single-user application |
 | **Export/Import** | Not implemented | Cannot export defect reports |
@@ -258,16 +259,18 @@ On first launch:
 ### Technical Limitations
 1. **No Room Capture / 3D Mesh Scanning**: Unlike iOS with RoomPlan API and LiDAR, Android/ARCore does not provide a built-in room capture or 3D mesh reconstruction API. Our app can only detect flat planes (floors, walls, ceilings) but cannot generate a full 3D mesh of the environment. This is a platform limitation, not an implementation choice.
 
-2. **SceneView/Filament Crashes**: Navigation between AR and 3D views can cause Filament material crashes if not handled carefully. Current implementation includes workarounds but edge cases may exist.
+2. **Wall & Ceiling Plane Visualization**: While ARCore **does detect** vertical planes (walls) when `planeFindingMode = HORIZONTAL_AND_VERTICAL` is set, **SceneView's built-in PlaneRenderer only visualizes horizontal upward-facing planes** (floors/tables). This is a SceneView library limitation. The app can still place markers on walls via hit-testing when they are detected, but you won't see the visual grid overlay on vertical surfaces. Ceiling detection (downward-facing planes) is also rarely detected by ARCore itself.
 
-3. **Memory Usage**: Large numbers of defects with high-resolution images may impact performance. Thumbnails are generated but original images are kept.
+3. **SceneView/Filament Crashes**: Navigation between AR and 3D views can cause Filament material crashes if not handled carefully. Current implementation includes workarounds but edge cases may exist.
 
-4. **Plane Detection Accuracy**: Surface classification (Floor vs Table) uses a simple height threshold (-0.5m). May misclassify in some scenarios. Also in some lighting condition wall and ceiling may not worked at all.
+4. **Memory Usage**: Large numbers of defects with high-resolution images may impact performance. Thumbnails are generated but original images are kept.
 
-5. **Image Quality**: Camera images are captured from AR frame, which may have lower resolution than standard camera capture.
+5. **Plane Detection Accuracy**: Surface classification (Floor vs Table) uses a simple height threshold (-0.5m). May misclassify in some scenarios.
 
-6. **3D View Scaling**: Very spread-out defects may appear clustered due to normalization. Very close defects may overlap.
+6. **Image Quality**: Camera images are captured from AR frame, which may have lower resolution than standard camera capture.
 
-7. **No Persistent AR**: ARCore anchors are session-based. When the app closes, the spatial relationship between defects and the physical environment is lost. Cloud Anchors could address this but are not implemented.
+7. **3D View Scaling**: Very spread-out defects may appear clustered due to normalization. Very close defects may overlap.
+
+8. **No Persistent AR**: ARCore anchors are session-based. When the app closes, the spatial relationship between defects and the physical environment is lost. Cloud Anchors could address this but are not implemented.
 ---
 

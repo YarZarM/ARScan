@@ -151,7 +151,7 @@ private fun Scene3DContent(
     selectedDefect: Defect?,
     onDefectSelected: (Defect) -> Unit
 ) {
-    // Create all SceneView resources
+
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val materialLoader = rememberMaterialLoader(engine)
@@ -317,17 +317,16 @@ private fun Scene3DContent(
         renderer = renderer,
         scene = scene,
         cameraNode = cameraNode,
-        cameraManipulator = cameraManipulator,  // This enables orbit controls
+        cameraManipulator = cameraManipulator,
         childNodes = childNodes,
         onFrame = { frameTimeNanos ->
-            // Frame callback - can be used for animations
+
         },
         onTouchEvent = { motionEvent: MotionEvent, hitResult: HitResult? ->
             // Let cameraManipulator handle the touch first for orbit/zoom
             // Only intercept taps on nodes
             if (motionEvent.action == MotionEvent.ACTION_UP &&
                 motionEvent.eventTime - motionEvent.downTime < 200) {
-                // Short tap - check for node hit
                 hitResult?.node?.let { node ->
                     val nodeName = node.name
                     Log.d(TAG, "Tapped node: $nodeName")

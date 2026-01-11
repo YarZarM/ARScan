@@ -27,13 +27,13 @@ class ImageStorage @Inject constructor(
 
         val imageFile = File(imageDir, filename)
         FileOutputStream(imageFile).use { out ->
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
         }
 
         val thumbnailFile = File(thumbnailDir, filename)
         val thumbnail = createThumbnail(bitmap)
         FileOutputStream(thumbnailFile).use { out ->
-            thumbnail.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+            thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, out)
         }
         thumbnail.recycle()
 
