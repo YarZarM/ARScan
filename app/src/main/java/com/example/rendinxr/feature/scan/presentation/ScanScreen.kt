@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import android.media.Image
 import android.util.Log
+import android.view.Choreographer
 import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,12 +41,16 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,9 +58,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.rendinxr.core.domain.model.SurfaceType
+import com.google.android.filament.Engine
 import com.google.ar.core.Config
 import com.google.ar.core.Frame
+import com.google.ar.core.HitResult
 import com.google.ar.core.InstantPlacementPoint
 import com.google.ar.core.Plane
 import com.google.ar.core.TrackingFailureReason
@@ -67,6 +77,7 @@ import io.github.sceneview.ar.arcore.isValid
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.ar.rememberARCameraNode
 import io.github.sceneview.ar.rememberARCameraStream
+import io.github.sceneview.node.Node
 import io.github.sceneview.node.SphereNode
 import io.github.sceneview.rememberCollisionSystem
 import io.github.sceneview.rememberEngine
@@ -80,6 +91,8 @@ import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.jar.Manifest
 
+private const val TAG = "ScanScreen"
+
 @Composable
 fun ScanScreen(
     onNavigateToReview: () -> Unit,
@@ -87,12 +100,37 @@ fun ScanScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     var hasCameraPermission by remember { mutableStateOf(false) }
+    var isActive by remember { mutableStateOf(true) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasCameraPermission = granted
+    }
+
+    // Track lifecycle to prevent AR operations during navigation
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    isActive = true
+                    Log.d(TAG, "ScanScreen ON_RESUME, isActive = true")
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    isActive = false
+                    Log.d(TAG, "ScanScreen ON_PAUSE, isActive = false")
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            Log.d(TAG, "ScanScreen disposing lifecycle observer")
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -102,7 +140,14 @@ fun ScanScreen(
     LaunchedEffect(Unit) {
         viewModel.navigationEvent.collect { navigationEvent ->
             when (navigationEvent) {
-                NavigationEvent.ToReview -> onNavigateToReview()
+                NavigationEvent.ToReview -> {
+                    // Stop AR operations BEFORE navigating
+                    isActive = false
+                    Log.d(TAG, "Navigating to Review, isActive = false")
+                    // Give AR session and nodes time to properly shut down
+                    // This allows LaunchedEffect(isActive) to clear nodes
+                    onNavigateToReview()
+                }
             }
         }
     }
@@ -115,15 +160,33 @@ fun ScanScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // IMPORTANT: Keep ARScene always in composition to avoid Filament material crashes
+        // Just disable interactions via isActive flag
         ARSceneContent(
             state = state,
-            onEvent = viewModel::onEvent
+            onEvent = viewModel::onEvent,
+            isActive = isActive
         )
 
-        ScanOverlay(
-            state = state,
-            onEvent = viewModel::onEvent
-        )
+        // Overlay black screen when navigating away
+        if (!isActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        }
+
+        // Only show overlay when active
+        if (isActive) {
+            ScanOverlay(
+                state = state,
+                onEvent = viewModel::onEvent
+            )
+        }
 
         if (state.showDescriptionDialog) {
             DefectDescriptionDialog(
@@ -162,124 +225,16 @@ fun ScanScreen(
     }
 }
 
-//@Composable
-//private fun ARSceneContent(
-//    state: ScanState,
-//    onEvent: (ScanEvent) -> Unit
-//) {
-//    val engine = rememberEngine()
-//    val modelLoader = rememberModelLoader(engine)
-//    val materialLoader = rememberMaterialLoader(engine)
-//    val view = rememberView(engine)
-//    val cameraNode = rememberARCameraNode(engine)
-//    val nodes = rememberNodes()
-//    val collisionSystem = rememberCollisionSystem(view)
-//    var frame: Frame? by remember { mutableStateOf(null) }
-//
-//    ARScene(
-//        modifier = Modifier.fillMaxSize(),
-//        engine = engine,
-//        modelLoader = modelLoader,
-//        cameraNode = cameraNode,
-//        childNodes = nodes,
-//        collisionSystem = collisionSystem,
-//        sessionConfiguration = { session, config ->
-//            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-//            config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-//            config.depthMode = if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-//                Config.DepthMode.AUTOMATIC
-//            } else {
-//                Config.DepthMode.DISABLED
-//            }
-//        },
-//        cameraStream = rememberARCameraStream(materialLoader),
-//        onSessionCreated = {
-//            onEvent(ScanEvent.ARSessionReady)
-//        },
-//        onSessionUpdated = { session, updatedFrame ->
-//            frame = updatedFrame
-//
-//            val camera = updatedFrame.camera
-//            val trackingState = when (camera.trackingState) {
-//                ARTrackingState.TRACKING -> TrackingState.TRACKING
-//                ARTrackingState.PAUSED -> TrackingState.LIMITED
-//                ARTrackingState.STOPPED -> TrackingState.STOPPED
-//            }
-//            onEvent(ScanEvent.TrackingStateChanged(trackingState))
-//
-//            val planes = updatedFrame.getUpdatedTrackables(Plane::class.java)
-//            if (planes.any { it.trackingState == ARTrackingState.TRACKING }) {
-//                onEvent(ScanEvent.PlaneDetected)
-//            }
-//        },
-//        onGestureListener = rememberOnGestureListener(
-//            onSingleTapConfirmed = {motionEvent, node ->
-//                val currentFrame = frame ?: return@rememberOnGestureListener
-//
-//                if (state.trackingState != TrackingState.TRACKING) return@rememberOnGestureListener
-//
-//                val hitResults = currentFrame.hitTest(motionEvent)
-//                val validHit = hitResults.firstOrNull() { hit ->
-//                    val trackable = hit.trackable
-//                    trackable is Plane && trackable.isPoseInPolygon(hit.hitPose) && hit.isValid()
-//                }
-//
-//                validHit?.let { hit ->
-//                    val plane = hit.trackable as Plane
-//                    val surfaceType = when (plane.type) {
-//                        Plane.Type.HORIZONTAL_UPWARD_FACING -> {
-//                            if (hit.hitPose.ty() < 0.3f) SurfaceType.FLOOR else SurfaceType.TABLE
-//                        }
-//                        Plane.Type.HORIZONTAL_DOWNWARD_FACING -> SurfaceType.CEILING
-//                        Plane.Type.VERTICAL -> SurfaceType.WALL
-//                    }
-//
-//                    val anchor = hit.createAnchorOrNull()
-//                    anchor?.let { anc ->
-//                        val pose = anc.pose
-//                        val anchorNode = AnchorNode(engine = engine, anchor = anc)
-//                        val sphereNode = SphereNode(
-//                            engine = engine,
-//                            radius = 0.03f,
-//                            materialInstance = materialLoader.createColorInstance(
-//                                color = Color.Red.copy(alpha = 0.8f)
-//                            )
-//                        )
-//                        anchorNode.addChildNode(sphereNode)
-//                        nodes.add(anchorNode)
-//
-//                        onEvent(ScanEvent.TapToPlace(
-//                            worldX = pose.tx(),
-//                            worldY = pose.ty(),
-//                            worldZ = pose.tz(),
-//                            surfaceType = surfaceType
-//                        ))
-//
-//                        currentFrame.acquireCameraImage().use { image ->
-//                            // Convert to bitmap for saving
-//                            // Note: This is simplified - production would need proper YUV conversion
-//                            val bitmap = imageToBitmap(image)
-//                            bitmap?.let {
-//                                val defectId = state.pendingDefects.lastOrNull()?.id
-//                                    ?: return@let
-//                                onEvent(ScanEvent.ImageCaptured(defectId, it))
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//        )
-//    )
-//}
-
 @Composable
 private fun ARSceneContent(
     state: ScanState,
-    onEvent: (ScanEvent) -> Unit
+    onEvent: (ScanEvent) -> Unit,
+    isActive: Boolean
 ) {
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val materialLoader = rememberMaterialLoader(engine)
+    val view = rememberView(engine)
 
     var frame by remember { mutableStateOf<Frame?>(null) }
     val childNodes = rememberNodes()
@@ -287,15 +242,27 @@ private fun ARSceneContent(
     // Track pending image capture
     var pendingImageCapture by remember { mutableStateOf<String?>(null) }
 
+    // Track detected plane types for UI feedback
+    var horizontalPlaneCount by remember { mutableIntStateOf(0) }
+    var verticalPlaneCount by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            destroyNodesSafely(engine, childNodes)
+        }
+    }
+
     ARScene(
         modifier = Modifier.fillMaxSize(),
         engine = engine,
         modelLoader = modelLoader,
-        planeRenderer = true,
+        view = view,
+        planeRenderer = isActive, // Disable plane renderer when not active
         sessionConfiguration = { session, config ->
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+            config.focusMode = Config.FocusMode.AUTO
             config.depthMode = if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                 Config.DepthMode.AUTOMATIC
             } else {
@@ -321,8 +288,21 @@ private fun ARSceneContent(
 
             // Check for detected planes
             val planes = session.getAllTrackables(Plane::class.java)
-            if (planes.any { it.trackingState == ARTrackingState.TRACKING }) {
+            val trackingPlanes = planes.filter { it.trackingState == ARTrackingState.TRACKING }
+
+            horizontalPlaneCount = trackingPlanes.count {
+                it.type == Plane.Type.HORIZONTAL_UPWARD_FACING ||
+                        it.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING
+            }
+            verticalPlaneCount = trackingPlanes.count { it.type == Plane.Type.VERTICAL }
+
+            if (trackingPlanes.isNotEmpty()) {
                 onEvent(ScanEvent.PlaneDetected)
+            }
+
+            // Log plane detection for debugging
+            if (trackingPlanes.isNotEmpty()) {
+                Log.d(TAG, "Planes: ${trackingPlanes.size} (H:$horizontalPlaneCount, V:$verticalPlaneCount)")
             }
 
             // Handle pending image capture
@@ -350,108 +330,46 @@ private fun ARSceneContent(
             onEvent(ScanEvent.TrackingStateChanged(trackingState))
         },
         onTouchEvent = { motionEvent, _ ->
-            handleTouchEvent(
-                motionEvent = motionEvent,
-                frame = frame,
-                state = state,
-                engine = engine,
-                materialLoader = materialLoader,
-                childNodes = childNodes,
-                onEvent = onEvent,
-                onPendingImageCapture = { defectId -> pendingImageCapture = defectId }
-            )
+            // Skip touch events if not active (navigating away)
+            if (!isActive) return@ARScene true
+
+            if (motionEvent.action == MotionEvent.ACTION_DOWN) {
+                handleTap(
+                    motionEvent = motionEvent,
+                    frame = frame,
+                    state = state,
+                    engine = engine,
+                    materialLoader = materialLoader,
+                    childNodes = childNodes,
+                    onEvent = onEvent,
+                    onPendingImageCapture = { defectId -> pendingImageCapture = defectId }
+                )
+            }
+            true
         }
-//        onGestureListener = rememberOnGestureListener(
-//            onSingleTapConfirmed = { motionEvent, node ->
-//                val currentFrame = frame ?: return@rememberOnGestureListener
-//
-//                if (state.trackingState != TrackingState.TRACKING) return@rememberOnGestureListener
-//                if (state.isCapturingImage) return@rememberOnGestureListener
-//
-//                // Perform hit test using x, y coordinates
-//                val hitResults = currentFrame.hitTest(motionEvent.x, motionEvent.y)
-//                val validHit = hitResults.firstOrNull { hit ->
-//                    val trackable = hit.trackable
-//                    when (trackable) {
-//                        is Plane -> {
-//                            trackable.trackingState == ARTrackingState.TRACKING &&
-//                                    trackable.isPoseInPolygon(hit.hitPose)
-//                        }
-//                        is InstantPlacementPoint -> {
-//                            trackable.trackingState == ARTrackingState.TRACKING
-//                        }
-//                        else -> false
-//                    }
-////                    trackable is Plane &&
-////                            trackable.isPoseInPolygon(hit.hitPose) &&
-////                            trackable.trackingState == ARTrackingState.TRACKING
-//                }
-//
-//                validHit?.let { hit ->
-////                    val plane = hit.trackable as Plane
-////                    val surfaceType = when (plane.type) {
-////                        Plane.Type.HORIZONTAL_UPWARD_FACING -> {
-////                            if (hit.hitPose.ty() < 0.3f) SurfaceType.FLOOR else SurfaceType.TABLE
-////                        }
-////                        Plane.Type.HORIZONTAL_DOWNWARD_FACING -> SurfaceType.CEILING
-////                        Plane.Type.VERTICAL -> SurfaceType.WALL
-////                        else -> SurfaceType.UNKNOWN
-////                    }
-//                    val surfaceType = when (val trackable = validHit.trackable) {
-//                        is Plane -> when (trackable.type) {
-//                            Plane.Type.HORIZONTAL_UPWARD_FACING -> {
-//                                if (validHit.hitPose.ty() < 0.3f) SurfaceType.FLOOR else SurfaceType.TABLE
-//                            }
-//                            Plane.Type.HORIZONTAL_DOWNWARD_FACING -> SurfaceType.CEILING
-//                            Plane.Type.VERTICAL -> SurfaceType.WALL
-//                            else -> SurfaceType.UNKNOWN
-//                        }
-//                        is InstantPlacementPoint -> SurfaceType.UNKNOWN  // Can't determine from instant placement
-//                        else -> SurfaceType.UNKNOWN
-//                    }
-//
-//                    // Create anchor
-//                    val anchor = hit.createAnchorOrNull()
-//                    anchor?.let { anc ->
-//                        val pose = anc.pose
-//
-//                        // Generate defect ID
-//                        val defectId = UUID.randomUUID().toString()
-//
-//                        // Add visual marker
-//                        val anchorNode = AnchorNode(engine = engine, anchor = anc)
-//                        val sphereNode = SphereNode(
-//                            engine = engine,
-//                            radius = 0.03f,
-//                            materialInstance = materialLoader.createColorInstance(
-//                                color = Color.Red,
-//                                metallic = 0.0f,
-//                                roughness = 0.5f,
-//                                reflectance = 0.5f
-//                            )
-//                        )
-//                        anchorNode.addChildNode(sphereNode)
-//                        childNodes.add(anchorNode)
-//
-//                        // Notify ViewModel
-//                        onEvent(ScanEvent.TapToPlace(
-//                            defectId = defectId,
-//                            worldX = pose.tx(),
-//                            worldY = pose.ty(),
-//                            worldZ = pose.tz(),
-//                            surfaceType = surfaceType
-//                        ))
-//
-//                        // Queue image capture for next frame
-//                        pendingImageCapture = defectId
-//                    }
-//                }
-//            }
-//        )
     )
 }
 
-private fun handleTouchEvent(
+private suspend fun destroyNodesSafely(engine: Engine, nodes: MutableList<Node>) {
+    val nodesToDestroy = nodes.toList()
+
+    nodesToDestroy.forEach { runCatching { it.parent = null } }
+    nodes.clear()
+
+    // Let one frame render without them
+    withFrameNanos { }
+    withFrameNanos { }
+
+    // Destroy in reverse order (children first if you added sphere then anchor)
+    nodesToDestroy.asReversed().forEach { runCatching { it.destroy() } }
+
+    withFrameNanos { }
+    withFrameNanos { }
+
+    runCatching { engine.flushAndWait() }
+}
+
+private fun handleTap(
     motionEvent: MotionEvent,
     frame: Frame?,
     state: ScanState,
@@ -460,104 +378,103 @@ private fun handleTouchEvent(
     childNodes: MutableList<io.github.sceneview.node.Node>,
     onEvent: (ScanEvent) -> Unit,
     onPendingImageCapture: (String) -> Unit
-): Boolean {
-    // Only handle tap (ACTION_DOWN)
-    if (motionEvent.action != MotionEvent.ACTION_DOWN) {
-        return true
-    }
-
-    Log.d(TAG, "Touch event at: ${motionEvent.x}, ${motionEvent.y}")
+) {
+    Log.d(TAG, "Tap at: ${motionEvent.x}, ${motionEvent.y}")
 
     val currentFrame = frame
     if (currentFrame == null) {
         Log.d(TAG, "No frame available")
-        return true
+        return
     }
 
     if (state.trackingState != TrackingState.TRACKING) {
         Log.d(TAG, "Not tracking: ${state.trackingState}")
-        return true
+        return
     }
 
     if (state.isCapturingImage) {
         Log.d(TAG, "Already capturing image")
-        return true
+        return
     }
 
     // Perform hit test
     val hitResults = currentFrame.hitTest(motionEvent.x, motionEvent.y)
     Log.d(TAG, "Hit results: ${hitResults.size}")
 
-    val validHit = hitResults.firstOrNull { hit ->
-        val trackable = hit.trackable
-        val isValid = when (trackable) {
-            is Plane -> {
-                trackable.trackingState == ARTrackingState.TRACKING &&
-                        trackable.isPoseInPolygon(hit.hitPose)
-            }
-            is InstantPlacementPoint -> {
-                trackable.trackingState == ARTrackingState.TRACKING
-            }
-            else -> false
-        }
-        Log.d(TAG, "Hit trackable: ${trackable::class.simpleName}, valid: $isValid")
-        isValid
-    }
+    // Find best hit - prefer planes over instant placement
+    val validHit = findBestHit(hitResults)
 
     if (validHit == null) {
-        Log.d(TAG, "No valid hit found")
-        return true
+        Log.d(TAG, "No valid hit found - tap on a detected surface")
+        return
     }
 
-    Log.d(TAG, "Valid hit found!")
+    val trackable = validHit.trackable
+    Log.d(TAG, "Valid hit on: ${trackable::class.simpleName}")
 
-    val surfaceType = when (val trackable = validHit.trackable) {
-        is Plane -> when (trackable.type) {
-            Plane.Type.HORIZONTAL_UPWARD_FACING -> {
-                if (validHit.hitPose.ty() < 0.3f) SurfaceType.FLOOR else SurfaceType.TABLE
+    // Determine surface type
+    val surfaceType = when (trackable) {
+        is Plane -> {
+            Log.d(TAG, "Plane type: ${trackable.type}")
+            when (trackable.type) {
+                Plane.Type.HORIZONTAL_UPWARD_FACING -> {
+                    // Check height to distinguish floor vs table
+                    val hitY = validHit.hitPose.ty()
+                    Log.d(TAG, "Horizontal plane at Y: $hitY")
+                    if (hitY < -0.5f) SurfaceType.FLOOR else SurfaceType.TABLE
+                }
+                Plane.Type.HORIZONTAL_DOWNWARD_FACING -> SurfaceType.CEILING
+                Plane.Type.VERTICAL -> SurfaceType.WALL
+                else -> SurfaceType.UNKNOWN
             }
-            Plane.Type.HORIZONTAL_DOWNWARD_FACING -> SurfaceType.CEILING
-            Plane.Type.VERTICAL -> SurfaceType.WALL
-            else -> SurfaceType.UNKNOWN
         }
-        is InstantPlacementPoint -> SurfaceType.UNKNOWN
         else -> SurfaceType.UNKNOWN
     }
+
+    Log.d(TAG, "Surface type: $surfaceType")
 
     // Create anchor
     val anchor = validHit.createAnchorOrNull()
     if (anchor == null) {
         Log.e(TAG, "Failed to create anchor")
-        return true
+        return
     }
 
     val pose = anchor.pose
     val defectId = UUID.randomUUID().toString()
 
-    Log.d(TAG, "Creating marker for defect: $defectId at ${pose.tx()}, ${pose.ty()}, ${pose.tz()}")
+    Log.d(TAG, "Creating marker at: ${pose.tx()}, ${pose.ty()}, ${pose.tz()}")
 
-    // Add visual marker
+    // Add visual marker - color based on surface type
     try {
+        val markerColor = when (surfaceType) {
+            SurfaceType.FLOOR -> Color(0xFF4CAF50)    // Green
+            SurfaceType.WALL -> Color(0xFF2196F3)     // Blue
+            SurfaceType.CEILING -> Color(0xFF9C27B0) // Purple
+            SurfaceType.TABLE -> Color(0xFFFF9800)   // Orange
+            SurfaceType.UNKNOWN -> Color.Red
+        }
+
         val anchorNode = AnchorNode(engine = engine, anchor = anchor)
         val sphereNode = SphereNode(
             engine = engine,
-            radius = 0.03f,
+            radius = 0.025f,
             materialInstance = materialLoader.createColorInstance(
-                color = Color.Red,
+                color = markerColor,
                 metallic = 0.0f,
                 roughness = 0.5f,
                 reflectance = 0.5f
             )
         )
         anchorNode.addChildNode(sphereNode)
+        childNodes.add(sphereNode)
         childNodes.add(anchorNode)
         Log.d(TAG, "Marker added to scene")
     } catch (e: Exception) {
         Log.e(TAG, "Failed to create marker", e)
-        return true
+        return
     }
 
-    // Notify ViewModel
     onEvent(ScanEvent.TapToPlace(
         defectId = defectId,
         worldX = pose.tx(),
@@ -566,12 +483,28 @@ private fun handleTouchEvent(
         surfaceType = surfaceType
     ))
 
-    // Queue image capture
     onPendingImageCapture(defectId)
-
-    return true
 }
 
+private fun findBestHit(hitResults: List<HitResult>): HitResult? {
+    // First, try to find a hit on a tracked plane
+    val planeHit = hitResults.firstOrNull { hit ->
+        val trackable = hit.trackable
+        trackable is Plane &&
+                trackable.trackingState == ARTrackingState.TRACKING &&
+                trackable.isPoseInPolygon(hit.hitPose)
+    }
+
+    if (planeHit != null) {
+        return planeHit
+    }
+
+    // Fall back to any tracked plane (even if not in polygon - edge case)
+    return hitResults.firstOrNull { hit ->
+        val trackable = hit.trackable
+        trackable is Plane && trackable.trackingState == ARTrackingState.TRACKING
+    }
+}
 /**
  * Acquire bitmap from AR frame's camera image
  */
@@ -810,41 +743,3 @@ private fun DefectDescriptionDialog(
         }
     )
 }
-
-//private fun imageToBitmap(image: android.media.Image): Bitmap? {
-//    return try {
-//        val planes = image.planes
-//        val yBuffer = planes[0].buffer
-//        val uBuffer = planes[1].buffer
-//        val vBuffer = planes[2].buffer
-//
-//        val ySize = yBuffer.remaining()
-//        val uSize = uBuffer.remaining()
-//        val vSize = vBuffer.remaining()
-//
-//        val nv21 = ByteArray(ySize + uSize + vSize)
-//        yBuffer.get(nv21, 0, ySize)
-//        vBuffer.get(nv21, ySize, vSize)
-//        uBuffer.get(nv21, ySize + vSize, uSize)
-//
-//        val yuvImage = android.graphics.YuvImage(
-//            nv21,
-//            android.graphics.ImageFormat.NV21,
-//            image.width,
-//            image.height,
-//            null
-//        )
-//
-//        val out = java.io.ByteArrayOutputStream()
-//        yuvImage.compressToJpeg(
-//            android.graphics.Rect(0, 0, image.width, image.height),
-//            90,
-//            out
-//        )
-//
-//        val bytes = out.toByteArray()
-//        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-//    } catch (e: Exception) {
-//        null
-//    }
-//}
