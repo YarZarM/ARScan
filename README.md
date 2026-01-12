@@ -8,11 +8,12 @@ An Android POC application for marking and tracking defects in physical spaces u
 
 1. [Overview](#overview)
 2. [Platform & Stack](#platform--stack)
-3. [Features](#features)
-4. [Architecture](#architecture)
-5. [Setup Instructions](#setup-instructions)
-6. [Usage Guide](#usage-guide)
-7. [Assumptions & Limitations](#assumptions--limitations)
+3. [Demo](#demo)
+4. [Features](#features)
+5. [Architecture](#architecture)
+6. [Setup Instructions](#setup-instructions)
+7. [Usage Guide](#usage-guide)
+8. [Assumptions & Limitations](#assumptions--limitations)
 
 ---
 
@@ -63,6 +64,12 @@ This application requires ARCore-supported devices. Key requirements:
 - **Google Play Services for AR**: Must be installed (prompted automatically)
 - **Camera Permission**: Required for AR functionality
 - **Adequate Lighting**: Surface detection works best in well-lit environments
+
+---
+
+## Demo
+
+[▶ Watch the demo](./demo.mp4)
 
 ---
 
